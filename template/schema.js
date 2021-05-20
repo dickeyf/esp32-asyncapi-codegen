@@ -153,12 +153,6 @@ cJSON* create_${schemaName}Schema(double value);`
       break;
     case "boolean":
       content += `
-#ifndef __cplusplus
-typedef unsigned char bool;
-static const bool False = 0;
-static const bool True = 1;
-#endif
-      
 cJSON* create_${schemaName}Schema(bool value);`
       break;
     case "array":
@@ -243,6 +237,7 @@ function buildIncludeList(schemaName, schema) {
 
 function SchemaHFile({ schemaName, schema }) {
   let content = `#include "cjson.h"
+#include <stdbool.h>
 `;
 
   content += schemaDefGen(schemaName, schema);
