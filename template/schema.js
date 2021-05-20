@@ -93,6 +93,15 @@ cJSON* create_${schemaName}Schema() {
   return content;
 }
 
+function booleanGen(schemaName, schema) {
+  let content = `
+cJSON* create_${schemaName}Schema(bool value) {
+  return cJSON_CreateBool( value);
+}
+`
+  return content;
+}
+
 function stringGen(schemaName, schema) {
   let content = `
 cJSON* create_${schemaName}Schema(const char * value) {
@@ -119,6 +128,9 @@ function schemaGen(schemaName, schema) {
     case "string":
       content += stringGen(schemaName, schema);
     break;
+    case "boolean":
+      content += booleanGen(schemaName, schema);
+    break;
     case "number":
       content += numberGen(schemaName, schema);
     break;
@@ -138,6 +150,16 @@ cJSON* create_${schemaName}Schema(int value);`
     case "number":
       content += `
 cJSON* create_${schemaName}Schema(double value);`
+      break;
+    case "boolean":
+      content += `
+#ifndef __cplusplus
+typedef unsigned char bool;
+static const bool False = 0;
+static const bool True = 1;
+#endif
+      
+cJSON* create_${schemaName}Schema(bool value);`
       break;
     case "array":
       content += `
@@ -161,6 +183,10 @@ struct ${schemaName} {`
           case "string":
             content += `
   const char* ${normalizeSchemaName(propName)};`;
+            break;
+          case "boolean":
+            content += `
+  bool ${normalizeSchemaName(propName)};`;
             break;
           case "array":
             content += `
@@ -216,7 +242,8 @@ function buildIncludeList(schemaName, schema) {
 }
 
 function SchemaHFile({ schemaName, schema }) {
-  let content = "";
+  let content = `#include "cjson.h"
+`;
 
   content += schemaDefGen(schemaName, schema);
 
@@ -225,8 +252,7 @@ function SchemaHFile({ schemaName, schema }) {
 
 
 function SchemaCFile({ schemaName, schema }) {
-  let content = `#include "cjson.h"
-`;
+  let content = "";
 
   content += buildIncludeList(schemaName, schema);
 
