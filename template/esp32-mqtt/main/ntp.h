@@ -1,1 +1,0 @@
-void time_init();

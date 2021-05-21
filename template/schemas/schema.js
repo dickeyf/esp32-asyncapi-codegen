@@ -1,35 +1,29 @@
 import { File } from '@asyncapi/generator-react-sdk';
-import { normalizeSchemaName } from '../helpers/normalizeSchemaName';
-
-const outputdir = "esp32-mqtt/main/";
+import { normalizeSchemaName } from '../../helpers/normalizeSchemaName';
 
 /*
  * To render multiple files, it is enough to return an array of "File" components in the rendering component, like in following example.
  */
-export default function({ asyncapi }) {
+export default function({ asyncapi, params }) {
   const schemas = asyncapi.allSchemas();
   // schemas is an instance of the Map
-
-  const fs = require('fs');
-  let dir = outputdir + 'events/schemas';
-
-  if (!fs.existsSync("output/" + dir)){
-    fs.mkdirSync("output/" + dir, { recursive: true });
-  }
 
   let arr = Array.from(schemas).map(([schemaName, schema]) => {
     const name = normalizeSchemaName(schemaName);
     return [(
-      <File name={dir + `/${name}Schema.c`}>
+      <File name={`${name}Schema.c`}>
         <SchemaCFile schemaName={name} schema={schema} />
       </File>),(
-      <File name={dir + `/${name}Schema.h`}>
+      <File name={`${name}Schema.h`}>
         <SchemaHFile schemaName={name} schema={schema} />
       </File>
     )];
   });
 
-  return [].concat(...arr);
+  return [(
+      <File name={`CMakeLists.txt`}>
+        <CMakeLists schemas={schemas} />
+      </File>)].concat(...arr);
 }
 
 function numberGen(schemaName, schema) {
@@ -258,6 +252,22 @@ function SchemaCFile({ schemaName, schema }) {
   content += buildIncludeList(schemaName, schema);
 
   content += schemaGen(schemaName, schema);
+
+  return content;
+}
+
+function CMakeLists({schemas}) {
+  let content = `
+idf_component_register(SRCS 
+`;
+
+  Array.from(schemas).map(([schemaName, schema]) => {
+    const name = normalizeSchemaName(schemaName);
+    content += "      " + name + "Schema.c\n";
+  });
+
+  content += `      REQUIRES json
+      INCLUDE_DIRS .)`;
 
   return content;
 }

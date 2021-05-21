@@ -3,3 +3,6 @@ __transpiled
 node_modules
 output
 *.iml
+/build/
+.cproject
+.project
