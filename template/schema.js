@@ -26,24 +26,76 @@ export default function({ asyncapi, params }) {
       </File>)].concat(...arr);
 }
 
+function generate_common_json_parse() {
+  return `
+static cJSON* read_json(const char* jsonPayload, const char** error_msg) {
+  *error_msg = NULL;
+  cJSON* json = cJSON_Parse(jsonPayload);
+  
+  if (!json) {
+    *error_msg = "Failed to parse request as JSON.";
+    return NULL;
+  }
+  
+  return json;
+}
+`
+}
+
 function numberGen(schemaName, schema) {
-  let content = `
+  return `
 cJSON* create_${schemaName}Schema(double value) {
   return cJSON_CreateNumber( value);
 }
-`
 
-  return content;
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, double* output, const char** error_msg) {
+  if (!cJSON_IsNumber(json)) {
+    *error_msg = "Failed to parse request: expected a JSON number value (double expected).";
+    return ESP_FAIL;
+  }
+
+  *output = cJSON_GetNumberValue(json);
+  return ESP_OK;
+}
+
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, double* output, const char** error_msg) {
+  cJSON* json = read_json(jsonPayload, error_msg);
+  if (json == NULL) {
+    return ESP_FAIL;
+  }
+
+  esp_err_t result = unmarshal_${schemaName}Schema(json, output, error_msg);
+  cJSON_Delete(json);
+  return result;
+}`;
 }
 
 function integerGen(schemaName, schema) {
-  let content = `
+  return `
 cJSON* create_${schemaName}Schema(int value) {
   return cJSON_CreateNumber( value);
 }
-`
 
-  return content;
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, int* output, const char** error_msg) {
+  if (!cJSON_IsNumber(json)) {
+    *error_msg = "Failed to parse request: expected a JSON number value (integer expected).";
+    return ESP_FAIL;
+  }
+
+  *output = (int)cJSON_GetNumberValue(json);
+  return ESP_OK;
+}
+
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, int* output, const char** error_msg) {
+  cJSON* json = read_json(jsonPayload, error_msg);
+  if (json == NULL) {
+    return ESP_FAIL;
+  }
+
+  esp_err_t result = unmarshal_${schemaName}Schema(json, output, error_msg);
+  cJSON_Delete(json);
+  return result;
+}`;
 }
 
 
@@ -70,7 +122,74 @@ cJSON* create_${schemaName}Schema(const struct ${schemaName}* value) {
   content += `
   return object_${schemaName};
 }
+
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, struct ${schemaName}** output, const char** error_msg) {
+  if (!cJSON_IsObject(json)) {
+    *error_msg = "Failed to parse request: expected a JSON object (${schemaName} expected).";
+    return ESP_FAIL;
+  }
+  
+  *output = malloc(sizeof(struct ${schemaName}));
+  (*output)->jsonObj = NULL;
 `
+
+  Object.keys(schema.properties()).forEach(propName => {
+    let prop = schema.property(propName);
+    content += `
+  // Unmarshal Property ${propName} of ${schemaName} (Type: ${prop.type()})
+  if (!cJSON_HasObjectItem(json, "${propName}")) {
+    free(*output);
+    *error_msg = "The ${propName} field is missing from the request.";
+    return ESP_FAIL;
+  }
+  esp_err_t result = unmarshal_${normalizeSchemaName(prop.uid())}Schema(cJSON_GetObjectItem(json, "${propName}"), 
+                             &((*output)->${normalizeSchemaName(propName)}), 
+                             error_msg);
+  if (result != ESP_OK) {
+    free(*output);
+    return result; 
+  }
+`
+  });
+
+  content += `
+  return ESP_OK;
+}
+
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, struct ${schemaName}** output, const char** error_msg) {
+  cJSON* json = read_json(jsonPayload, error_msg);
+  if (json == NULL) {
+    return ESP_FAIL;
+  }
+
+  esp_err_t result = unmarshal_${schemaName}Schema(json, output, error_msg);
+  
+  if (result != ESP_OK) {
+    cJSON_Delete(json);
+  } else {
+    (*output)->jsonObj = json;
+  }
+
+  return result;
+}
+
+void free_${schemaName}Schema(struct ${schemaName}* output) {
+  if (output->jsonObj != NULL) {
+    cJSON_Delete(output->jsonObj);
+  }
+`
+    Object.keys(schema.properties()).forEach(propName => {
+    let prop = schema.property(propName);
+    if (prop.type() === "object") {
+      content += `
+  free_${normalizeSchemaName(prop.uid())}Schema(output->${normalizeSchemaName(propName)});
+`;
+    }
+});
+content +=` 
+  free(output);
+}
+`;
 
   return content;
 }
@@ -86,21 +205,63 @@ cJSON* create_${schemaName}Schema() {
 }
 
 function booleanGen(schemaName, schema) {
-  let content = `
+  return `
 cJSON* create_${schemaName}Schema(bool value) {
   return cJSON_CreateBool( value);
 }
-`
-  return content;
+
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, bool* output, const char** error_msg) {
+  if (!cJSON_IsBool(json)) {
+    *error_msg = "Failed to parse request: expected a JSON boolean value.";
+    return ESP_FAIL;
+  }
+
+  *output = cJSON_IsTrue(json);
+  return ESP_OK;
+}
+
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, bool* output, const char** error_msg) {
+  cJSON* json = read_json(jsonPayload, error_msg);
+  if (json == NULL) {
+    return ESP_FAIL;
+  }
+
+  esp_err_t result = read_${schemaName}Schema(json, output, error_msg);
+  cJSON_Delete(json);
+  return result;
+}`;
 }
 
 function stringGen(schemaName, schema) {
-  let content = `
+  return `
 cJSON* create_${schemaName}Schema(const char * value) {
   return cJSON_CreateString( value);
 }
-`
-  return content;
+
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, const char** output, const char** error_msg) {
+  if (!cJSON_IsString(json)) {
+    *error_msg = "Failed to parse request: expected a JSON string value.";
+    return ESP_FAIL;
+  }
+
+  *output = cJSON_GetStringValue(json);
+  return ESP_OK;
+}
+
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, int bufLen, char* output, const char** error_msg) {
+  cJSON* json = read_json(jsonPayload, error_msg);
+  if (json == NULL) {
+    return ESP_FAIL;
+  }
+
+  char* stringFromJson;
+  esp_err_t result = unmarshal_${schemaName}Schema(json, &stringFromJson, error_msg);
+  if (result == ESP_OK) {
+    strncpy(output, stringFromJson, bufLen);
+  }
+  cJSON_Delete(json);
+  return result;
+}`
 }
 
 function schemaGen(schemaName, schema) {
@@ -137,14 +298,20 @@ function schemaDefGen(schemaName, schema) {
   switch (schema.type()) {
     case "integer":
       content += `
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, int* output, const char** error_msg);
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, int* output, const char** error_msg);
 cJSON* create_${schemaName}Schema(int value);`
       break;
     case "number":
       content += `
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, double* output, const char** error_msg);
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, double* output, const char** error_msg);
 cJSON* create_${schemaName}Schema(double value);`
       break;
     case "boolean":
       content += `
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, bool* output, const char** error_msg);
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, bool* output, const char** error_msg);
 cJSON* create_${schemaName}Schema(bool value);`
       break;
     case "array":
@@ -153,8 +320,8 @@ cJSON* create_${schemaName}Schema();`
       break;
     case "object":
       content += `
-struct ${schemaName} {`
-
+struct ${schemaName} {
+  cJSON* jsonObj;`
       Object.keys(schema.properties()).forEach(propName => {
         const property = schema.property(propName);
         switch(property.type()) {
@@ -181,7 +348,8 @@ struct ${schemaName} {`
           case "object":
             const propSchemaName = normalizeSchemaName(property.uid());
             content += `
-  struct ${propSchemaName}* ${normalizeSchemaName(propName)};`
+  struct ${propSchemaName}* ${normalizeSchemaName(propName)};
+`
             break;
         }
       });
@@ -189,10 +357,19 @@ struct ${schemaName} {`
       content += `
 };
 
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, struct ${schemaName}** output, const char** error_msg);
+
+// This function will allocate a structure and store its pointer where output points to.
+// To free up memory allocated, pass the pointer back via free_${schemaName}Schema
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, struct ${schemaName}** output, const char** error_msg);
+// Free all memory allocated by the read function
+void free_${schemaName}Schema(struct ${schemaName}* output);
 cJSON* create_${schemaName}Schema(const struct ${schemaName}* value);`
       break;
     case "string":
       content += `
+esp_err_t unmarshal_${schemaName}Schema(cJSON* json, const char** output, const char** error_msg);
+esp_err_t read_${schemaName}Schema(const char* jsonPayload, int bufLen, char* output, const char** error_msg);
 cJSON* create_${schemaName}Schema(const char* value);`
       break;
   }
@@ -203,9 +380,9 @@ cJSON* create_${schemaName}Schema(const char* value);`
 
 function buildIncludeList(schemaName, schema) {
   let includeFiles = {};
-  let content = "";
-
-  content += `
+  let content = `
+#include <stdio.h>
+#include <string.h>
 #include "${schemaName}Schema.h"`;
 
   if (schema.type() === "object") {
@@ -229,15 +406,18 @@ function buildIncludeList(schemaName, schema) {
 
 function SchemaHFile({ schemaName, schema }) {
   let content = `#include "cjson.h"
+#include <esp_err.h>
 #include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
-#endif`;
+#endif
+`;
 
   content += schemaDefGen(schemaName, schema);
 
   content += `
+
 #ifdef __cplusplus
 }
 #endif`
@@ -251,6 +431,7 @@ function SchemaCFile({ schemaName, schema }) {
 
   content += buildIncludeList(schemaName, schema);
 
+  content += generate_common_json_parse();
   content += schemaGen(schemaName, schema);
 
   return content;
