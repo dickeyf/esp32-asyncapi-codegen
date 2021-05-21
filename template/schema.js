@@ -1,5 +1,5 @@
 import { File } from '@asyncapi/generator-react-sdk';
-import { normalizeSchemaName } from '../../helpers/normalizeSchemaName';
+import { normalizeSchemaName } from '../helpers/normalizeSchemaName';
 
 /*
  * To render multiple files, it is enough to return an array of "File" components in the rendering component, like in following example.
