@@ -255,7 +255,7 @@ esp_err_t read_${schemaName}Schema(const char* jsonPayload, int bufLen, char* ou
     return ESP_FAIL;
   }
 
-  char* stringFromJson;
+  const char* stringFromJson;
   esp_err_t result = unmarshal_${schemaName}Schema(json, &stringFromJson, error_msg);
   if (result == ESP_OK) {
     strncpy(output, stringFromJson, bufLen);
