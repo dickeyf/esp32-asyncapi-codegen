@@ -131,6 +131,7 @@ esp_err_t unmarshal_${schemaName}Schema(cJSON* json, struct ${schemaName}** outp
   
   *output = malloc(sizeof(struct ${schemaName}));
   (*output)->jsonObj = NULL;
+  esp_err_t result;
 `
 
   Object.keys(schema.properties()).forEach(propName => {
@@ -142,7 +143,7 @@ esp_err_t unmarshal_${schemaName}Schema(cJSON* json, struct ${schemaName}** outp
     *error_msg = "The ${propName} field is missing from the request.";
     return ESP_FAIL;
   }
-  esp_err_t result = unmarshal_${normalizeSchemaName(prop.uid())}Schema(cJSON_GetObjectItem(json, "${propName}"), 
+  result = unmarshal_${normalizeSchemaName(prop.uid())}Schema(cJSON_GetObjectItem(json, "${propName}"), 
                              &((*output)->${normalizeSchemaName(propName)}), 
                              error_msg);
   if (result != ESP_OK) {
@@ -226,7 +227,7 @@ esp_err_t read_${schemaName}Schema(const char* jsonPayload, bool* output, const 
     return ESP_FAIL;
   }
 
-  esp_err_t result = read_${schemaName}Schema(json, output, error_msg);
+  esp_err_t result = unmarshal_${schemaName}Schema(json, output, error_msg);
   cJSON_Delete(json);
   return result;
 }`;
