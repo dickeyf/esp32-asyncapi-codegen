@@ -1,7 +1,7 @@
 import { File } from '@asyncapi/generator-react-sdk';
 import { normalizeSchemaName } from '../helpers/normalizeSchemaName';
 
-
+const outputdir = "esp32-mqtt/main/";
 
 /*
  * To render multiple files, it is enough to return an array of "File" components in the rendering component, like in following example.
@@ -11,21 +11,19 @@ export default function({ asyncapi }) {
   // schemas is an instance of the Map
 
   const fs = require('fs');
-  let dir = './output/esp32-mqtt/main/events/schemas';
+  let dir = outputdir + 'events/schemas';
 
-  console.log("Creating " + dir);
-  if (!fs.existsSync(dir)){
-    console.log("Doesn't exists: " + dir);
-    fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync("output/" + dir)){
+    fs.mkdirSync("output/" + dir, { recursive: true });
   }
 
   let arr = Array.from(schemas).map(([schemaName, schema]) => {
     const name = normalizeSchemaName(schemaName);
     return [(
-      <File name={`esp32-mqtt/main/events/schemas/${name}Schema.c`}>
+      <File name={dir + `/${name}Schema.c`}>
         <SchemaCFile schemaName={name} schema={schema} />
       </File>),(
-      <File name={`esp32-mqtt/main/events/schemas/${name}Schema.h`}>
+      <File name={dir + `/${name}Schema.h`}>
         <SchemaHFile schemaName={name} schema={schema} />
       </File>
     )];
@@ -238,9 +236,17 @@ function buildIncludeList(schemaName, schema) {
 function SchemaHFile({ schemaName, schema }) {
   let content = `#include "cjson.h"
 #include <stdbool.h>
-`;
+
+#ifdef __cplusplus
+extern "C" {
+#endif`;
 
   content += schemaDefGen(schemaName, schema);
+
+  content += `
+#ifdef __cplusplus
+}
+#endif`
 
   return content;
 }
