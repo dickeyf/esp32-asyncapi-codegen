@@ -6,9 +6,10 @@ import { normalizeSchemaName } from '../helpers/normalizeSchemaName';
  */
 export default function({ asyncapi, params }) {
   const schemas = asyncapi.allSchemas();
+  const messages = asyncapi.allMessages();
   // schemas is an instance of the Map
 
-  let arr = Array.from(schemas).map(([schemaName, schema]) => {
+  let schemaArr = Array.from(schemas).map(([schemaName, schema]) => {
     const name = normalizeSchemaName(schemaName);
     return [(
       <File name={`${name}Schema.c`}>
@@ -20,11 +21,107 @@ export default function({ asyncapi, params }) {
     )];
   });
 
+  let messageArr = Array.from(messages).map(([messageName, message]) => {
+    const name = normalizeSchemaName(messageName);
+    return [(
+      <File name={`${name}Message.c`}>
+        <MessageCFile messageName={name} message={message} />
+      </File>),(
+      <File name={`${name}Message.h`}>
+        <MessageHFile messageName={name} message={message} />
+      </File>
+    )];
+  });
+
   return [(
       <File name={`CMakeLists.txt`}>
-        <CMakeLists schemas={schemas} />
-      </File>)].concat(...arr);
+        <CMakeLists schemas={schemas} messages={messages}/>
+      </File>)].concat(...schemaArr).concat(...messageArr);
 }
+
+/***
+ * Messages STARTS
+ * Consider splitting this into a Message only file
+ */
+
+function schemaParam(schemaName, schema) {
+  let content = "";
+
+  switch (schema.type()) {
+    case "integer":
+      content = "int";
+      break;
+    case "number":
+      content = "double";
+      break;
+    case "boolean":
+      content += "bool";
+      break;
+    case "array":
+      content += ""
+      break;
+    case "object":
+      content += `const struct ${schemaName}*`;
+      break;
+    case "string":
+      content += "const char*";
+      break;
+  }
+
+  return content;
+}
+
+function MessageHFile({ messageName, message }) {
+  const messageSchema = message.payload();
+  const messageSchemaName = normalizeSchemaName(messageSchema.uid());
+  const schemaParamType = schemaParam(messageSchemaName, messageSchema);
+  const schemaSignature = schemaParamType==="" ? "" : schemaParamType + " payload";
+
+  let content = `#include <esp_err.h>
+#include <stdbool.h>
+
+#include "${messageSchemaName}Schema.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+`;
+
+  content += `
+char *create_${messageName}Message(${schemaSignature});
+
+#ifdef __cplusplus
+}
+#endif`
+
+  return content;
+}
+
+
+function MessageCFile({ messageName, message }) {
+  const messageSchema = message.payload();
+  const messageSchemaName = normalizeSchemaName(messageSchema.uid());
+  const schemaParamType = schemaParam(messageSchemaName, messageSchema);
+  const schemaSignature = schemaParamType==="" ? "" : schemaParamType + " payload";
+  return `#include "cjson.h"
+
+#include "${messageName}Message.h"
+  
+char *create_${messageName}Message(${schemaSignature}) {
+  cJSON *payload_json = create_${messageSchemaName}Schema(${schemaParamType===""?"":"payload"});
+
+  char *event_out = cJSON_PrintUnformatted(payload_json);
+  cJSON_Delete(payload_json);
+  return event_out;
+}
+
+`
+}
+
+/***
+ * SCHEMA STARTS
+ * Consider splitting this into a Schema only file
+ */
 
 function generate_common_json_parse() {
   return `
@@ -381,8 +478,7 @@ cJSON* create_${schemaName}Schema(const char* value);`
 
 function buildIncludeList(schemaName, schema) {
   let includeFiles = {};
-  let content = `
-#include <stdio.h>
+  let content = `#include <stdio.h>
 #include <string.h>
 #include "${schemaName}Schema.h"`;
 
@@ -438,7 +534,11 @@ function SchemaCFile({ schemaName, schema }) {
   return content;
 }
 
-function CMakeLists({schemas}) {
+
+/***
+ * CMakeLists starts.  Consider moving in other file.
+ */
+function CMakeLists({schemas, messages}) {
   let content = `
 idf_component_register(SRCS 
 `;
@@ -446,6 +546,11 @@ idf_component_register(SRCS
   Array.from(schemas).map(([schemaName, schema]) => {
     const name = normalizeSchemaName(schemaName);
     content += "      " + name + "Schema.c\n";
+  });
+
+  Array.from(messages).map(([messageName, message]) => {
+    const name = normalizeSchemaName(messageName);
+    content += "      " + name + "Message.c\n";
   });
 
   content += `      REQUIRES json
