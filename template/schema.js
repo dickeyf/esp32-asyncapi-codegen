@@ -7,6 +7,7 @@ import { normalizeSchemaName } from '../helpers/normalizeSchemaName';
 export default function({ asyncapi, params }) {
   const schemas = asyncapi.allSchemas();
   const messages = asyncapi.allMessages();
+  const channels = asyncapi.channels();
   // schemas is an instance of the Map
 
   let schemaArr = Array.from(schemas).map(([schemaName, schema]) => {
@@ -25,10 +26,10 @@ export default function({ asyncapi, params }) {
     const name = normalizeSchemaName(messageName);
     return [(
       <File name={`${name}Message.c`}>
-        <MessageCFile messageName={name} message={message} />
+        <MessageCFile channels={channels} messageName={name} message={message} />
       </File>),(
       <File name={`${name}Message.h`}>
-        <MessageHFile messageName={name} message={message} />
+        <MessageHFile channels={channels} messageName={name} message={message} />
       </File>
     )];
   });
@@ -71,7 +72,7 @@ function schemaParam(schemaName, schema) {
   return content;
 }
 
-function MessageHFile({ messageName, message }) {
+function MessageHFile({ channels, messageName, message }) {
   const messageSchema = message.payload();
   const messageSchemaName = normalizeSchemaName(messageSchema.uid());
   const schemaParamType = schemaParam(messageSchemaName, messageSchema);
@@ -79,6 +80,7 @@ function MessageHFile({ messageName, message }) {
 
   let content = `#include <esp_err.h>
 #include <stdbool.h>
+#include "mqtt_client.h"
 
 #include "${messageSchemaName}Schema.h"
 
@@ -89,7 +91,32 @@ extern "C" {
 
   content += `
 char *create_${messageName}Message(${schemaSignature});
+`
+  for (let channelName in channels) {
+    console.log("Simonac: " + channelName);
+    let channel = channels[channelName];
+    if (channel.hasSubscribe()) {
+      Array.from(channel.subscribe().messages()).forEach((chanMsg, _) => {
+        if (chanMsg.uid() === messageName) {
+          let chanParams = "";
+          if (channel.hasParameters()) {
+            for (let paramName in channel.parameters()) {
+              let parameter = channel.parameters()[paramName];
+              chanParams += ", ";
 
+              chanParams += paramType(parameter) + " " + paramName;
+            }
+          }
+          if (chanParams !== "" && schemaSignature!=="") {
+            chanParams += ", ";
+          }
+
+          content += `void publish_${messageName}Message(esp_mqtt_client_handle_t mqtt_client${chanParams}${schemaSignature});`;
+        }
+      });
+    }
+  }
+content += `
 #ifdef __cplusplus
 }
 #endif`
@@ -97,16 +124,58 @@ char *create_${messageName}Message(${schemaSignature});
   return content;
 }
 
+function paramType(parameter) {
+  let content = "";
 
-function MessageCFile({ messageName, message }) {
+  // integer array object string number
+  switch (parameter.schema().type()) {
+    case "integer":
+      return "int";
+      break;
+    case "string":
+      return "const char*";
+      break;
+    case "number":
+      return "double";
+      break;
+  }
+
+  return content;
+}
+
+function paramFormatType(parameter) {
+  let content = "";
+
+  // integer array object string number
+  switch (parameter.schema().type()) {
+    case "integer":
+      return "%d";
+      break;
+    case "string":
+      return "%s";
+      break;
+    case "number":
+      return "%f";
+      break;
+  }
+
+  return content;
+}
+
+
+function MessageCFile({ channels, messageName, message }) {
   const messageSchema = message.payload();
   const messageSchemaName = normalizeSchemaName(messageSchema.uid());
   const schemaParamType = schemaParam(messageSchemaName, messageSchema);
   const schemaSignature = schemaParamType==="" ? "" : schemaParamType + " payload";
-  return `#include "cjson.h"
+
+  let content = `#include "cjson.h"
 
 #include "${messageName}Message.h"
-  
+
+`
+
+content += `  
 char *create_${messageName}Message(${schemaSignature}) {
   cJSON *payload_json = create_${messageSchemaName}Schema(${schemaParamType===""?"":"payload"});
 
@@ -116,6 +185,60 @@ char *create_${messageName}Message(${schemaSignature}) {
 }
 
 `
+
+  for (let channelName in channels) {
+    let channel = channels[channelName];
+    if (channel.hasSubscribe()) {
+      Array.from(channel.subscribe().messages()).forEach((chanMsg, _) => {
+        if (chanMsg.uid() === messageName) {
+          let chanParams = "";
+          let chanFormatString = channelName;
+          let stringOrdinals = [];
+          if (channel.hasParameters()) {
+            for (let paramName in channel.parameters()) {
+              let parameter = channel.parameters()[paramName];
+              chanParams += ", ";
+
+              chanParams += paramType(parameter) + " " + paramName;
+              stringOrdinals.push({
+                position: chanFormatString.indexOf(paramName),
+                paramName: paramName
+              });
+              chanFormatString = chanFormatString.replace("{"+paramName+"}", paramFormatType(parameter));
+            }
+          }
+          if (chanParams !== "" && schemaSignature!=="") {
+            chanParams += ", ";
+          }
+
+          stringOrdinals.sort( (a,b) => {
+            if (a.position < b.position) return -1;
+            if (a.position > b.position) return 1;
+            return 0;
+          });
+
+          let parameters = "";
+          if (stringOrdinals.length>0) {
+            parameters = stringOrdinals.reduce((acc, param) => {
+              return acc + ",\n           " + param.paramName;
+            }, "");
+          }
+
+          content += `void publish_${messageName}Message(esp_mqtt_client_handle_t mqtt_client${chanParams}${schemaSignature}) {
+  char topic[256];
+  snprintf(topic, sizeof(topic), "${chanFormatString}"${parameters});
+                 
+  char *temp_msg = create_${messageName}Message(payload);
+  esp_mqtt_client_publish(mqtt_client, topic, temp_msg, 0, 0, 0);
+  free(temp_msg);
+}
+`
+        }
+      });
+    }
+  }
+
+  return content;
 }
 
 /***
@@ -553,7 +676,7 @@ idf_component_register(SRCS
     content += "      " + name + "Message.c\n";
   });
 
-  content += `      REQUIRES json
+  content += `      REQUIRES json mqtt
       INCLUDE_DIRS .)`;
 
   return content;
